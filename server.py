@@ -5,15 +5,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
+from multiprocessing import Process
 from os import path
 import sys
 import json
 from src.units import adb, sqlite
 from src.controllers import controller
-
-ANDROID_USER_AGENT = "Mozilla/5.0 (Linux; Android 7.1.1; Google Pixel - \
-7.1.0 - API 25 - 1080x1920 Build/NMF26Q; wv) AppleWebKit/537.36 (KHTML, like Gecko) \
-Version/4.0 Chrome/52.0.2743.100 Mobile Safari/537.36 SogouSearch Android1.0 version3.0 AppVersion/5802"
+from sogou_proxy import run_proxy_server
 
 CURRENT_DIR = path.dirname(path.realpath(__file__))
 
@@ -27,14 +25,12 @@ class MyHandler(BaseHTTPRequestHandler):
         """处理GET请求"""
         querypath = urlparse(self.path)
         apipath = querypath.path
-        if apipath.startswith("/allinone/sogou/api/ans"):
-            self.proxy_pass("/allinone/sogou/api/ans", "http://140.143.49.31/api/ans2",
-                            Referer="http://wd.sa.sogou.com/")
-        elif apipath.startswith("/allinone/uc/answer"):
+        if apipath.startswith("/allinone/uc/answer"):
             self.proxy_pass("/allinone/uc/answer", "http://answer.sm.cn/answer",
                             Referer="http://answer.sm.cn/answer/index?activity=million", Host="answer.sm.cn")
         else:
             self.handle_static()
+        self.close_connection = True
 
     def do_POST(self):
         """处理POST请求"""
@@ -42,15 +38,24 @@ class MyHandler(BaseHTTPRequestHandler):
         datas = json.loads(str(body, 'UTF-8'))
         querypath = urlparse(self.path)
         apipath = querypath.path
+        res = None
         if apipath.startswith("/reply-answer"):
             controller.handle_answer(apipath, datas)
+        elif apipath.startswith('/reply-correct'):
+            controller.save_correct_result(apipath, datas)
+        elif apipath.startswith('/review-answer'):
+            res = controller.get_review_datas()
         elif apipath.startswith('/toggle-ai'):
             controller.toggle_ai(datas)
         self.send_response_only(200)
         self.send_header('Content-type', 'json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write(b"ok")
+        if res:
+            self.wfile.write(json.dumps(res).encode('utf-8'))
+        else:
+            self.wfile.write(b"ok")
+        self.close_connection = True
 
     def proxy_pass(self, orgin_path, target_host_path, **my_headers):
         """反向代理"""
@@ -60,7 +65,7 @@ class MyHandler(BaseHTTPRequestHandler):
                 headers.replace_header(key, my_headers[key])
             else:
                 headers.add_header(key, my_headers[key])
-        headers.replace_header("User-Agent", ANDROID_USER_AGENT)
+        # headers.replace_header("User-Agent", ANDROID_USER_AGENT)
         req = Request(self.path.replace(
             orgin_path, target_host_path), headers=headers)
         data = None
@@ -77,7 +82,7 @@ class MyHandler(BaseHTTPRequestHandler):
             self.send_response_only(200)
             self.end_headers()
             if not data:
-                self.wfile.write(b"ok")
+                self.wfile.write(b"console.log('Remote Server Error')")
             else:
                 self.wfile.write(data)
 
@@ -86,7 +91,7 @@ class MyHandler(BaseHTTPRequestHandler):
         """处理静态文件请求"""
         send_reply = False
         querypath = urlparse(self.path)
-        filepath, query = querypath.path, querypath.query
+        filepath = querypath.path
 
         if filepath.endswith('/'):
             filepath += 'index.html'
@@ -98,6 +103,9 @@ class MyHandler(BaseHTTPRequestHandler):
             send_reply = True
         if filepath.endswith(".gif"):
             mimetype = 'image/gif'
+            send_reply = True
+        if filepath.endswith(".png"):
+            mimetype = 'image/png'
             send_reply = True
         if filepath.endswith(".ico"):
             mimetype = 'image/ico'
@@ -123,17 +131,13 @@ class MyHandler(BaseHTTPRequestHandler):
             except IOError:
                 self.send_error(404, 'File Not Found: %s' % self.path)
 
-    def simple_log(self, format, *args):
-        """自定义日志"""
-        sys.stderr.write("[%s] %s\n" %
-                         (self.log_date_time_string(), format % args))
 
 
-def run_server():
+def run_server(port=PORT):
     """启动本地服务器"""
-    server_address = ('', PORT)
+    server_address = ('', port)
     httpd = HTTPServer(server_address, MyHandler)
-    print('> Running Server On Port: ', PORT)
+    print('> Running Server On Port: ', port)
     print('> Press Ctrl + C to exit...\n')
     httpd.serve_forever()
 
@@ -142,8 +146,10 @@ def main():
     """主函数"""
     adb.init()
     sqlite.init_table()
+    sub_process = Process(target=run_proxy_server)
+    sub_process.start()
     run_server()
-
+    
 # start main at last ##########################################################
 
 

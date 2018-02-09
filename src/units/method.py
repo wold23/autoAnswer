@@ -8,6 +8,7 @@
 import time
 from urllib.request import Request, urlopen
 from colorama import Fore
+from src.configs import config
 
 
 def date_time_string():
@@ -57,18 +58,48 @@ def get_prefer_result(results, options):
         else:
             pri_obj[result.text] += result.prop
 
-    prefer_option = ''
+    prefer_results = sorted(pri_obj.items(), key=lambda item: -item[1])
 
-    prefer_pri = 0
+    try_times = min(config.TRY_TIMES, len(prefer_results))
 
-    for option, prop in pri_obj.items():
-        if prefer_pri < prop:
-            prefer_option = option
-            prefer_pri = prop
+    # 尝试 信任度prop最大的三个选项
+    for try_num in range(try_times):
 
-    for index, option in enumerate(options):
-        if prefer_option == option:
-            return index
+        # 匹配的字符数，初始化为0
+        match_counts = [0, 0, 0]
+        prefer_option = prefer_results[try_num][0]
+        prefer_prop = prefer_results[try_num][1]
+
+
+        # 1、信任度prop从大到小依次寻找匹配
+        if prefer_option in options:
+            print("[%s] PROP [%s] Exactly..." % (prefer_option, prefer_prop))
+            return options.index(prefer_option)
+
+
+        # 2、OCR识别错误，导致AI答案，没有匹配答题手机中的选项
+        for char in prefer_option:
+            for index, option in enumerate(options):
+                if str(char) in option:
+                    # 如果字符存在于手机的选项中，计数+1
+                    match_counts[index] += 1
+
+        # 寻找匹配字符数量最大的选项
+        max_count = 0
+        max_count_index = 0
+        for index, count in enumerate(match_counts):
+            if count > max_count:
+                max_count = count
+                max_count_index = index
+
+        # 匹配字符比例超过阈值则认为是可信任的选项
+        if max_count / len(prefer_option) >= config.OCR_THRESHOLD:
+            print("[%s] PROP [%s] Likely..." % (prefer_option, prefer_prop))
+            return max_count_index
+
+    # 3、某些个性题，AI返回的答案不全，没有包含答题手机中的选项
+    # 我也很绝望啊~~ 
+    # 是不是要来个随机数？？
 
     return None
 

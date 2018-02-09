@@ -14,6 +14,8 @@ $.ajax({
                 review: './uc/answer/detail?format=json', 
                 index: './uc/answer/index?format=json' 
             };
+            sm.COMMON_PARAMS.banner = "//sm01.alicdn.com/L1/272/6837/static/wap/img/dream/million.png";
+            sm.COMMON_PARAMS.activityName = "million";
         } catch(e) {
             console.log(e);
         }

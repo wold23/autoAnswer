@@ -9,6 +9,7 @@
 # 突然发现有些逻辑放model和controller都会有较大的耦合，着手抽离：）
 # model里放更纯粹的数据操作
 # controller放更纯粹的区分操作（AI还是Human）
+from src.configs import config
 from src.models.question import Question
 from src.models.answer import MyAnswer
 from src.models.result import Result
@@ -37,6 +38,7 @@ def answer_by_ai(datas, ai_type):
         question_id = refresh_answer(question)
         question.set_id(question_id)
         log_info("> step 2: get question ")
+        print("[%s. %s]" % (question_round, question_text))
     else:
         question = CUR_ANSWER.question
 
@@ -69,6 +71,8 @@ def answer_by_ai(datas, ai_type):
 def refresh_answer(question):
     global CUR_ANSWER
     CUR_ANSWER = MyAnswer(question)
+    CUR_ANSWER.start_answer_all()
+    
     question_id = questionDao.get_question_id(question.round, question.phase)
 
     if not question_id:
@@ -78,7 +82,7 @@ def refresh_answer(question):
 
 def add_result_baidu(index, options, question):
     """添加百度AI答案"""
-    prop = 0.6
+    prop = config.BAIDU_WEIGHT
     text = options[index]
     result = Result(index, text, prop, question.id)
     result.set_type("baidu")
@@ -89,7 +93,7 @@ def add_result_baidu(index, options, question):
 def add_result_baidu_percentage(results, question):
     """添加百度百分比答案"""
     for index, result in enumerate(results):
-        result = Result(index, result['text'], result['prop'], question.id)
+        result = Result(index, result['text'], result['prop'] * config.BAIDU_P_WEIGHT, question.id)
         result.set_type("baidu", "percentage")
         answerDao.save_result(result)
         CUR_ANSWER.add_result(result)
@@ -97,7 +101,7 @@ def add_result_baidu_percentage(results, question):
 
 def add_result_sogou(index, options, question):
     """添加搜狗AI答案"""
-    prop = 0.8
+    prop = config.SOGOU_WEIGHT
     text = options[index]
     result = Result(index, text, prop, question.id)
     result.set_type("sogou")
@@ -111,12 +115,12 @@ def add_result_uc(index, options, question):
         new_results = options[0].split("|-|")
         log_info("> step 3: add results individual")
         for index, result_text in enumerate(new_results):
-            result = Result(index, result_text, 1, question.id)
+            result = Result(index, result_text, config.UC_WEIGHT, question.id)
             result.set_type("uc", "single")
             answerDao.save_result(result)
             CUR_ANSWER.add_result(result)
     else:
-        prop = 0.8
+        prop = config.UC_WEIGHT
         text = options[index]
         result = Result(index, text, prop, question.id)
         result.set_type("uc")
@@ -129,5 +133,21 @@ def answer_by_human(datas, answer_type):
     result = int(datas["result"])
     question_round = str(datas["question"]["round"])
     adb.tap_android_all(result)
-    log_info(">>> No.%s %s Answer : %s",
+    log_info(">>> No.%s %s Human Answer : %s",
              question_round, answer_type, result)
+
+
+def save_correct_result(datas):
+    """保存正确结果"""
+    questions = datas['question']
+    question_phase = date_time_string()
+    for question in questions:
+        question_id = questionDao.get_question_id(str(question['id']), question_phase)
+        if isinstance(question['answer'], list):
+            for answer in question['answer']:
+                result = Result(0, answer, 1, question_id)
+                answerDao.save_correct_result(result)
+        else:
+            result = Result(0, question['answer'], 1, question_id)
+            answerDao.save_correct_result(result)
+    log_info(">>> Save Correct Result Success...")

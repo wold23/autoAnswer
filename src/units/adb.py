@@ -7,6 +7,7 @@
 """
 import subprocess
 import time
+import random
 import os
 import sys
 from multiprocessing import Process, Queue
@@ -36,45 +37,50 @@ def get_device_infos():
     return devices_list
 
 
-def get_options(device_id, index, shared_queue):
+def start_answer_individual(device_id, index, shared_queue):
     """获取选项"""
     start = time.time()
     check_screenshot(device_id, index)
-    log_warn("screenShot time： %ss", str(time.time() - start)[:4])
     img = Image.open("./screenshot" + index + ".png")
     # question, options = ocr_img_tess(img)
     options = ocr_img_tess_choices(img)
-    log_info("> step 4: get options")
+    log_warn("> step 4: get device[%s] options time： %ss", index, str(time.time() - start)[:4])
     print(str(options))
-    while time.time() - start < 6:
+
+    # 等待接收各个AI的答案
+    while time.time() - start < config.WAIT_TIME:
         time.sleep(0.2)
     results = shared_queue.get(False)
     shared_queue.put(results, False)
-    tap_android_individual(device_id, options, results)
 
+    # 计算最佳答案
+    result_index = get_prefer_result(results, options)
+    if result_index is None:
+        log_warn("> step 5: can not get device[%s] result, try random...", index)
+        time.sleep(0.2)
+        result_index = random.randint(0, 2)
+    else:
+        log_info("> step 5: get device[%s] prefer result is %s", index, result_index)
 
-def get_options_all():
+    log_info("> step 6: tap device[%s] result: %s", index, result_index)
+    tap_android_individual(device_id, result_index)
+
+def start_answer_all():
     """获取所有选项"""
     shared_queue = Queue(1)
     for index, device_id in enumerate(DEVICES_LIST):
-        sub_process = Process(target=get_options, args=(device_id, str(index), shared_queue))
+        sub_process = Process(target=start_answer_individual, args=(device_id, str(index), shared_queue))
         sub_process.start()
     return shared_queue
 
 
-def tap_android_individual(device_id, options, results):
+def tap_android_individual(device_id, result_index):
     """根据不同的安卓设备点击"""
-    result_index = get_prefer_result(results, options)
-    log_info("> step 5: get prefer option is %s", result_index)
-    if result_index is None:
-        return
     left_start, top_start = config.TAP_START.replace(" ", "").split(",")
     target_left = int(left_start)
     top_start = int(top_start)
     top_gap = int(config.TAP_GAP)
     target_top = top_start + top_gap * (result_index + 1)
-
-    log_info("> step 6: tap result: %s", result_index)
 
     command = "adb -s " + device_id + " shell input tap " + \
         str(target_left) + " " + str(target_top)
